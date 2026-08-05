@@ -30,12 +30,20 @@ function getModel(): string {
   return process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
 }
 
-async function callGemini(
+const FALLBACK_MODEL = "gemini-flash-latest";
+
+function getModels(): string[] {
+  const primary = getModel();
+  return [primary, FALLBACK_MODEL].filter((m, i, arr) => arr.indexOf(m) === i);
+}
+
+async function callGeminiModel(
+  model: string,
   parts: { text?: string; file?: GeminiFilePart }[],
   jsonMode: boolean
 ): Promise<string> {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${getModel()}:generateContent?key=${getApiKey()}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${getApiKey()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -72,6 +80,22 @@ async function callGemini(
   }
 
   return text.trim();
+}
+
+async function callGemini(
+  parts: { text?: string; file?: GeminiFilePart }[],
+  jsonMode: boolean
+): Promise<string> {
+  const models = getModels();
+  let lastError: Error | null = null;
+  for (const model of models) {
+    try {
+      return await callGeminiModel(model, parts, jsonMode);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError ?? new Error("Gemini gagal memproses dokumen.");
 }
 
 export async function extractTextFromPdf(base64: string): Promise<string> {
@@ -258,16 +282,51 @@ function isComplete(data: ExtractedSurat): boolean {
 }
 
 function extractByAi(text: string, jenis: JenisSurat): Promise<ExtractedSurat> {
+  const prompt = buildExtractPrompt(text, jenis, false);
+  return callGemini([{ text: prompt }], true).then((raw) => {
+    const parsed = safeParseJson(raw);
+    return normalizeResult(parsed);
+  });
+}
+
+function extractByAiFromPdf(
+  base64: string,
+  jenis: JenisSurat
+): Promise<ExtractedSurat> {
+  const prompt = buildExtractPrompt("", jenis, true);
+  return callGemini(
+    [
+      {
+        file: {
+          inlineData: { mimeType: "application/pdf", data: base64 },
+        },
+      },
+      { text: prompt },
+    ],
+    true
+  ).then((raw) => {
+    const parsed = safeParseJson(raw);
+    return normalizeResult(parsed);
+  });
+}
+
+function buildExtractPrompt(
+  text: string,
+  jenis: JenisSurat,
+  fromPdf: boolean
+): string {
   const tujuanField =
     jenis === "Surat Masuk"
       ? 'tujuan: nama instansi/pengirim surat'
       : 'tujuan: nama instansi penerima surat';
 
-  const prompt = `Berikut adalah hasil OCR dari sebuah surat ${jenis}.
+  const sourceText = fromPdf
+    ? "Baca dokumen PDF yang dilampirkan, termasuk teks pada hasil scan/gambar."
+    : `Berikut adalah hasil OCR dari sebuah surat ${jenis}:\n\n${text}`;
 
-${text}
+  return `${sourceText}
 
-Ekstrak informasi berikut dari surat di atas dan kembalikan dalam bentuk JSON:
+Ekstrak informasi berikut dan kembalikan dalam bentuk JSON:
 {
   "nomor_surat": "nomor surat, misal 421.1/123/Dikdas",
   "tanggal": "tanggal surat dalam format YYYY-MM-DD",
@@ -275,30 +334,76 @@ Ekstrak informasi berikut dari surat di atas dan kembalikan dalam bentuk JSON:
   ${tujuanField}
 }
 
-Gunakan nilai yang persis ada di teks. Jika tidak ditemukan, gunakan string kosong.`;
-  return callGemini([{ text: prompt }], true).then((raw) => {
-    const parsed = safeParseJson(raw);
-    const data: ExtractedSurat = {
-      nomor_surat: readString(parsed?.nomor_surat),
-      tanggal: parseTanggalToISO(readString(parsed?.tanggal)),
-      perihal: readString(parsed?.perihal),
-      tujuan: readString(parsed?.tujuan),
-    };
-    return data;
-  });
+Gunakan nilai yang persis ada di dokumen. Jika tidak ditemukan, gunakan string kosong.`;
+}
+
+function normalizeResult(parsed: Record<string, unknown> | null): ExtractedSurat {
+  return {
+    nomor_surat: readString(parsed?.nomor_surat),
+    tanggal: parseTanggalToISO(readString(parsed?.tanggal)),
+    perihal: readString(parsed?.perihal),
+    tujuan: readString(parsed?.tujuan),
+  };
+}
+
+function mergeResults(
+  regexResult: ExtractedSurat,
+  aiResult: ExtractedSurat
+): ExtractedSurat {
+  return {
+    nomor_surat: aiResult.nomor_surat || regexResult.nomor_surat,
+    tanggal: aiResult.tanggal || regexResult.tanggal,
+    perihal: aiResult.perihal || regexResult.perihal,
+    tujuan: aiResult.tujuan || regexResult.tujuan,
+  };
+}
+
+function isEmpty(data: ExtractedSurat): boolean {
+  return (
+    data.nomor_surat.length === 0 &&
+    data.tanggal.length === 0 &&
+    data.perihal.length === 0 &&
+    data.tujuan.length === 0
+  );
 }
 
 export async function extractSuratFromPdf(
   base64: string,
   jenis: JenisSurat
 ): Promise<{ data: ExtractedSurat; source: ExtractionSource }> {
-  const ocrText = await extractTextFromPdf(base64);
+  let ocrText = "";
+  try {
+    ocrText = await extractTextFromPdf(base64);
+  } catch {
+    ocrText = "";
+  }
 
   const regexResult = extractByRegex(ocrText, jenis);
   if (isComplete(regexResult)) {
     return { data: regexResult, source: "regex" };
   }
 
-  const aiResult = await extractByAi(ocrText, jenis);
-  return { data: aiResult, source: "ai" };
+  let aiResult: ExtractedSurat | null = null;
+  try {
+    aiResult = await extractByAiFromPdf(base64, jenis);
+  } catch {
+    aiResult = null;
+  }
+
+  if (aiResult) {
+    const merged = mergeResults(regexResult, aiResult);
+    if (!isEmpty(merged)) {
+      return { data: merged, source: "ai" };
+    }
+  }
+
+  const textAiResult = await extractByAi(ocrText || "Tidak ada hasil OCR.", jenis);
+  if (!isEmpty(textAiResult)) {
+    const merged = mergeResults(regexResult, textAiResult);
+    return { data: merged, source: "ai" };
+  }
+
+  throw new Error(
+    "Isi surat tidak dapat dibaca secara otomatis. Silakan isi kolom secara manual."
+  );
 }

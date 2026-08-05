@@ -59,7 +59,7 @@ export function Sidebar({ role }: SidebarProps) {
     });
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r bg-sidebar md:flex md:flex-col">
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r bg-sidebar md:flex md:flex-col">
       <div className="flex h-16 items-center gap-2 border-b px-6">
         <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <FileText className="size-5" />

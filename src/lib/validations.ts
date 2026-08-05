@@ -62,7 +62,10 @@ export const pdfFileSchema = z
   });
 
 export const loginSchema = z.object({
-  email: z.string().trim().email("Email tidak valid."),
+  email: z
+    .string()
+    .trim()
+    .min(1, "Username atau email wajib diisi."),
   password: z.string().min(6, "Password minimal 6 karakter."),
 });
 

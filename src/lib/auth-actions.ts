@@ -11,16 +11,24 @@ export async function signIn(input: unknown): Promise<{
 }> {
   const parsed = loginSchema.safeParse(input);
   if (!parsed.success) {
-    return { success: false, error: "Email atau password tidak valid." };
+    return { success: false, error: "Username atau password tidak valid." };
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+
+  const identifier = parsed.data.email.includes("@")
+    ? parsed.data.email
+    : `${parsed.data.email}@simsurat.internal`;
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email: identifier,
+    password: parsed.data.password,
+  });
 
   if (error) {
     return {
       success: false,
-      error: "Email atau password salah.",
+      error: "Username atau password salah.",
     };
   }
 

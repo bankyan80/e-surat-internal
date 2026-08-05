@@ -127,6 +127,19 @@ create policy "surat_delete_auth"
   using (true);
 
 -- 8. Policies profiles
+-- Fungsi bantu cek administrator tanpa subquery rekursif
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select role = 'Administrator' from public.profiles where id = auth.uid()),
+    false
+  );
+$$;
+
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own"
   on public.profiles for select
@@ -137,12 +150,7 @@ drop policy if exists "profiles_select_admin" on public.profiles;
 create policy "profiles_select_admin"
   on public.profiles for select
   to authenticated
-  using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'Administrator'
-    )
-  );
+  using (public.is_admin());
 
 drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own"
@@ -154,34 +162,19 @@ drop policy if exists "profiles_update_admin" on public.profiles;
 create policy "profiles_update_admin"
   on public.profiles for update
   to authenticated
-  using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'Administrator'
-    )
-  );
+  using (public.is_admin());
 
 drop policy if exists "profiles_insert_admin" on public.profiles;
 create policy "profiles_insert_admin"
   on public.profiles for insert
   to authenticated
-  with check (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'Administrator'
-    )
-  );
+  with check (public.is_admin());
 
 drop policy if exists "profiles_delete_admin" on public.profiles;
 create policy "profiles_delete_admin"
   on public.profiles for delete
   to authenticated
-  using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'Administrator'
-    )
-  );
+  using (public.is_admin());
 
 -- 9. Policies audit_logs
 drop policy if exists "audit_logs_insert_auth" on public.audit_logs;
@@ -194,12 +187,7 @@ drop policy if exists "audit_logs_select_admin" on public.audit_logs;
 create policy "audit_logs_select_admin"
   on public.audit_logs for select
   to authenticated
-  using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role = 'Administrator'
-    )
-  );
+  using (public.is_admin());
 
 -- ============================================
 -- Storage: bucket 'surat'

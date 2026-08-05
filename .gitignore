@@ -40,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+supabase/.temp/
+*.log
+dev-pid.txt
+.vercel
+.env*
+!.env.example

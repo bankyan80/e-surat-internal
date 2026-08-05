@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { Loader2, UploadCloud, FileText, X } from "lucide-react";
+import { Loader2, UploadCloud, FileText, X, ScanSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +30,7 @@ import { BUCKET_NAME, MAX_FILE_SIZE } from "@/lib/constants";
 import { generateUUID } from "@/lib/utils";
 import { toast } from "sonner";
 import type { JenisSurat, Surat } from "@/lib/types";
+import type { ExtractedSurat, ExtractionSource } from "@/lib/extract-surat";
 
 interface SuratFormDialogProps {
   open: boolean;
@@ -53,6 +54,11 @@ export function SuratFormDialog({
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [existingPath, setExistingPath] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractResult, setExtractResult] = useState<{
+    source: ExtractionSource;
+    data: ExtractedSurat;
+  } | null>(null);
 
   const createSurat = useCreateSurat();
   const updateSurat = useUpdateSurat();
@@ -80,6 +86,7 @@ export function SuratFormDialog({
       });
       setFile(null);
       setExistingPath(surat?.file_pdf ?? null);
+      setExtractResult(null);
     }
   }, [open, surat, form]);
 
@@ -105,6 +112,55 @@ export function SuratFormDialog({
     }
 
     setFile(selected);
+    setExtractResult(null);
+    void runExtraction(selected);
+  };
+
+  const runExtraction = async (f: File) => {
+    setExtracting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", f);
+      formData.append("jenis", jenis);
+
+      const response = await fetch("/api/extract-surat", {
+        method: "POST",
+        body: formData,
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || !json.success) {
+        toast.warning(
+          json.error ?? "Gagal membaca isi surat secara otomatis."
+        );
+        return;
+      }
+
+      const data = json.data as ExtractedSurat;
+      const source = json.source as ExtractionSource;
+
+      form.setValue("nomor_surat", data.nomor_surat || form.getValues("nomor_surat"));
+      form.setValue("tanggal", data.tanggal || form.getValues("tanggal"));
+      form.setValue("perihal", data.perihal || form.getValues("perihal"));
+      form.setValue("tujuan", data.tujuan || form.getValues("tujuan"));
+
+      setExtractResult({ source, data });
+
+      const filledCount = [data.nomor_surat, data.tanggal, data.perihal, data.tujuan].filter(
+        (v) => v.length > 0
+      ).length;
+
+      toast.success(
+        source === "ai"
+          ? `Surat dibaca AI, ${filledCount} dari 4 kolom terisi otomatis.`
+          : `OCR berhasil, ${filledCount} dari 4 kolom terisi otomatis.`
+      );
+    } catch {
+      toast.warning("Gagal membaca isi surat secara otomatis.");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const uploadFile = async (f: File): Promise<string> => {
@@ -323,12 +379,38 @@ export function SuratFormDialog({
                           className="size-6"
                           onClick={() => {
                             setFile(null);
+                            setExtractResult(null);
                             if (isEdit) setExistingPath(null);
                           }}
                         >
                           <X className="size-4" />
                         </Button>
                       </div>
+                    </div>
+                  )}
+
+                  {extracting && (
+                    <div className="flex items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-sm text-primary">
+                      <ScanSearch className="size-4 animate-pulse" />
+                      <span>Membaca isi surat...</span>
+                      <Loader2 className="size-4 animate-spin" />
+                    </div>
+                  )}
+
+                  {!extracting && extractResult && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
+                      <div className="flex items-center gap-2 font-medium">
+                        <ScanSearch className="size-4" />
+                        <span>
+                          {extractResult.source === "ai"
+                            ? "Surat dibaca AI"
+                            : "OCR berhasil"}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs">
+                        Kolom nomor, tanggal, perihal, dan tujuan sudah terisi
+                        otomatis. Periksa kembali sebelum menyimpan.
+                      </p>
                     </div>
                   )}
                 </div>

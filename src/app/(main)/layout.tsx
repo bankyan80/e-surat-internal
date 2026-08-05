@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { Sidebar } from "@/components/layout/sidebar";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/layout/app-shell";
 
@@ -33,10 +32,7 @@ export default async function MainLayout({
 
   return (
     <QueryProvider>
-      <AppShell
-        profile={profile}
-        sidebar={<Sidebar role={profile.role} />}
-      >
+      <AppShell profile={profile} role={profile.role}>
         {children}
       </AppShell>
     </QueryProvider>

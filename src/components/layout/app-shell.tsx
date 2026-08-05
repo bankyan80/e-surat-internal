@@ -4,23 +4,29 @@ import { useState } from "react";
 import { SearchProvider } from "@/components/providers/search-provider";
 import { Navbar } from "@/components/layout/navbar";
 import { MobileSidebar } from "@/components/layout/mobile-sidebar";
-import type { Profile } from "@/lib/types";
+import { Sidebar } from "@/components/layout/sidebar";
+import type { Profile, Role } from "@/lib/types";
 
 export function AppShell({
   profile,
-  sidebar,
+  role,
   children,
 }: {
   profile: Profile;
-  sidebar: React.ReactNode;
+  role: Role;
   children: React.ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <SearchProvider>
       <div className="flex min-h-screen">
-        {sidebar}
+        <Sidebar
+          role={role}
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((c) => !c)}
+        />
         <div className="flex min-h-screen flex-1 flex-col">
           <Navbar
             profile={profile}
@@ -30,7 +36,7 @@ export function AppShell({
         </div>
         <MobileSidebar
           open={menuOpen}
-          role={profile.role}
+          role={role}
           onClose={() => setMenuOpen(false)}
         />
       </div>

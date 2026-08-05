@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Loader2, UploadCloud, FileText, X, ScanSearch } from "lucide-react";
@@ -59,6 +59,7 @@ export function SuratFormDialog({
     source: ExtractionSource;
     data: ExtractedSurat;
   } | null>(null);
+  const uploadedPathRef = useRef<string | null>(null);
 
   const createSurat = useCreateSurat();
   const updateSurat = useUpdateSurat();
@@ -87,6 +88,7 @@ export function SuratFormDialog({
       setFile(null);
       setExistingPath(surat?.file_pdf ?? null);
       setExtractResult(null);
+      uploadedPathRef.current = null;
     }
   }, [open, surat, form]);
 
@@ -111,21 +113,31 @@ export function SuratFormDialog({
       return;
     }
 
+    const prevPath = uploadedPathRef.current;
+    if (prevPath && prevPath !== existingPath) {
+      const supabase = createClient();
+      void supabase.storage.from(BUCKET_NAME).remove([prevPath]);
+    }
+
     setFile(selected);
     setExtractResult(null);
+    uploadedPathRef.current = null;
     void runExtraction(selected);
   };
 
   const runExtraction = async (f: File) => {
     setExtracting(true);
     try {
-      const formData = new FormData();
-      formData.append("file", f);
-      formData.append("jenis", jenis);
+      let path = uploadedPathRef.current;
+      if (!path) {
+        path = await uploadFile(f);
+        uploadedPathRef.current = path;
+      }
 
       const response = await fetch("/api/extract-surat", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, jenis }),
       });
 
       const json = await response.json();
@@ -192,8 +204,25 @@ export function SuratFormDialog({
     await supabase.storage.from(BUCKET_NAME).remove([path]);
   };
 
+  const cleanupOrphanUpload = async () => {
+    const path = uploadedPathRef.current;
+    if (!path || path === existingPath) return;
+    const supabase = createClient();
+    await supabase.storage.from(BUCKET_NAME).remove([path]);
+    uploadedPathRef.current = null;
+  };
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next && !isSubmitting) {
+      void cleanupOrphanUpload();
+    }
+    onOpenChange(next);
+  };
+
   const onSubmit = async (values: SuratFormValues) => {
-    const uploadPromise = file ? uploadFile(file) : Promise.resolve(existingPath);
+    const uploadPromise = file
+      ? Promise.resolve(uploadedPathRef.current ?? uploadFile(file))
+      : Promise.resolve(existingPath);
 
     setUploading(true);
     try {
@@ -236,6 +265,7 @@ export function SuratFormDialog({
       form.reset();
       setFile(null);
       setExistingPath(null);
+      uploadedPathRef.current = null;
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Terjadi kesalahan saat upload."
@@ -248,7 +278,7 @@ export function SuratFormDialog({
   const canSubmit = isEdit ? file || existingPath : Boolean(file);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>

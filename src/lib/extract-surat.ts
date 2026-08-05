@@ -367,10 +367,24 @@ function isEmpty(data: ExtractedSurat): boolean {
   );
 }
 
+const SCAN_THRESHOLD = 4 * 1024 * 1024;
+
 export async function extractSuratFromPdf(
   base64: string,
   jenis: JenisSurat
 ): Promise<{ data: ExtractedSurat; source: ExtractionSource }> {
+  const isLikelyScan = base64.length > SCAN_THRESHOLD;
+
+  if (isLikelyScan) {
+    const aiResult = await extractByAiFromPdf(base64, jenis);
+    if (!isEmpty(aiResult)) {
+      return { data: aiResult, source: "ai" };
+    }
+    throw new Error(
+      "Isi surat tidak dapat dibaca secara otomatis. Silakan isi kolom secara manual."
+    );
+  }
+
   let ocrText = "";
   try {
     ocrText = await extractTextFromPdf(base64);
@@ -383,23 +397,9 @@ export async function extractSuratFromPdf(
     return { data: regexResult, source: "regex" };
   }
 
-  let aiResult: ExtractedSurat | null = null;
-  try {
-    aiResult = await extractByAiFromPdf(base64, jenis);
-  } catch {
-    aiResult = null;
-  }
-
-  if (aiResult) {
-    const merged = mergeResults(regexResult, aiResult);
-    if (!isEmpty(merged)) {
-      return { data: merged, source: "ai" };
-    }
-  }
-
   const textAiResult = await extractByAi(ocrText || "Tidak ada hasil OCR.", jenis);
-  if (!isEmpty(textAiResult)) {
-    const merged = mergeResults(regexResult, textAiResult);
+  const merged = mergeResults(regexResult, textAiResult);
+  if (!isEmpty(merged)) {
     return { data: merged, source: "ai" };
   }
 
